@@ -6,7 +6,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = "rootlens-local-development-key-change-before-deployment"
 DEBUG = True
-ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+
+ALLOWED_HOSTS = [
+    "root-lens-ai-xi.vercel.app",
+    "localhost",
+    "127.0.0.1",
+]
+
 
 INSTALLED_APPS = [
     "django.contrib.admin",
