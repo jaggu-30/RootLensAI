@@ -2,7 +2,10 @@
 from django.contrib import admin
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
-
+from banking.views import (
+    # Keep your existing imports here.
+    IncidentSourceAnalysisView,
+)
 from banking.views import (
     LoginView,
     MeView,
@@ -31,4 +34,8 @@ urlpatterns = [
     path("api/incidents/<int:pk>/analysis/", IncidentAnalysisView.as_view()),
     path("api/chat/", IncidentChatView.as_view()),
     path("api/incidents/<int:pk>/recover/", RecoverIncidentView.as_view()),
+    path(
+    "api/incidents/<int:pk>/source-analysis/",
+    IncidentSourceAnalysisView.as_view(),
+),
 ]

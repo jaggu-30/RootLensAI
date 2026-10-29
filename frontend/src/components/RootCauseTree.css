@@ -1,0 +1,457 @@
+.rct-panel {
+  min-width: 0;
+  padding: 22px;
+  color: #edf5ff;
+  background: linear-gradient(145deg, #071727, #030b15);
+  border: 1px solid #183a56;
+  border-radius: 15px;
+}
+
+.rct-panel *,
+.rct-panel *::before,
+.rct-panel *::after {
+  box-sizing: border-box;
+}
+
+.rct-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.rct-eyebrow {
+  color: #25dfc0;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.3px;
+}
+
+.rct-header h2 {
+  margin: 9px 0;
+  font-size: clamp(22px, 2vw, 30px);
+}
+
+.rct-header p {
+  margin: 0;
+  color: #a9bfd5;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.rct-refresh {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 13px;
+  color: #e8f4ff;
+  background: #10263b;
+  border: 1px solid #294963;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.rct-refresh:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.rct-alert {
+  margin: 12px 0;
+  padding: 11px 13px;
+  color: #cceaff;
+  background: #10263b;
+  border: 1px solid #294963;
+  border-radius: 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* Tree canvas */
+
+.rct-tree {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(200px, auto) minmax(200px, auto);
+  gap: 150px 28px;
+  min-height: 610px;
+  padding: 10px;
+  background:
+    linear-gradient(#15314a2a 1px, transparent 1px),
+    linear-gradient(90deg, #15314a2a 1px, transparent 1px),
+    radial-gradient(ellipse at center, #102d47, #04111e 75%);
+  background-size: 30px 30px, 30px 30px, auto;
+  border: 1px solid #173752;
+  border-radius: 12px;
+}
+
+.rct-root-svg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.rct-slot {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.rct-slot-database {
+  grid-area: 1 / 1;
+  padding-right: 10px;
+}
+
+.rct-slot-network {
+  grid-area: 1 / 2;
+  padding-left: 10px;
+}
+
+.rct-slot-service {
+  grid-area: 2 / 1;
+  padding-right: 10px;
+}
+
+.rct-slot-queue {
+  grid-area: 2 / 2;
+  padding-left: 10px;
+}
+
+/* Issue cards */
+
+.rct-issue-card {
+  --issue-color: #27baff;
+  height: 100%;
+  min-height: 200px;
+  padding: 14px;
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--issue-color) 10%, #071727),
+    #04111f
+  );
+  border: 1px solid var(--issue-color);
+  border-radius: 12px;
+  box-shadow: 0 0 16px color-mix(in srgb, var(--issue-color) 14%, transparent);
+}
+
+.rct-issue-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.rct-issue-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 39px;
+  width: 39px;
+  height: 39px;
+  color: var(--issue-color);
+  background: color-mix(in srgb, var(--issue-color) 13%, #071727);
+  border-radius: 9px;
+}
+
+.rct-issue-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.rct-issue-title h3 {
+  margin: 0 0 5px;
+  color: #f1f7ff;
+  font-size: clamp(11px, 1vw, 14px);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.rct-issue-title > span {
+  color: var(--issue-color);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.7px;
+}
+
+.rct-confidence {
+  flex: 0 0 47px;
+  text-align: center;
+}
+
+.rct-confidence-ring {
+  --ring-color: #27baff;
+  --ring-score: 0%;
+  display: grid;
+  place-items: center;
+  width: 43px;
+  height: 43px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, #071727 60%, transparent 62%),
+    conic-gradient(var(--ring-color) var(--ring-score), #23364a var(--ring-score));
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.rct-confidence small {
+  display: block;
+  margin-top: 4px;
+  color: #9bb2ca;
+  font-size: 8px;
+}
+
+.rct-issue-description {
+  color: #c0d2e5;
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.rct-evidence-label {
+  margin: 11px 0 7px;
+  color: #8da9c4;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+}
+
+.rct-evidence-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rct-evidence-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 7px;
+  color: #d7e7f8;
+  background: #132b40;
+  border-radius: 5px;
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.rct-evidence-list li span {
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  background: var(--issue-color);
+  border-radius: 50%;
+}
+
+.rct-no-evidence {
+  color: #a9bfd5;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.rct-score-missing {
+  color: #ffd18b;
+  font-size: 9px;
+}
+
+/* Central major cause */
+
+.rct-major {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  left: 50%;
+  width: min(43%, 390px);
+  min-width: 260px;
+  padding: 17px;
+  transform: translate(-50%, -50%);
+  background:
+    radial-gradient(ellipse at top left, #ff536d20, transparent 70%),
+    linear-gradient(145deg, #1a101e, #071321);
+  border: 2px solid #ff536d;
+  border-radius: 14px;
+  box-shadow: 0 0 14px #ff536d66, 0 0 34px #ff536d24;
+}
+
+.rct-major-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rct-major-icon {
+  display: grid;
+  place-items: center;
+  width: 41px;
+  height: 41px;
+  flex: 0 0 41px;
+  color: #ff7887;
+  background: #ff536d1c;
+  border-radius: 9px;
+}
+
+.rct-major-label {
+  color: #ff7887;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+.rct-major h3 {
+  margin: 12px 0;
+  color: #fff1f3;
+  font-size: clamp(15px, 1.3vw, 19px);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.rct-major-score {
+  color: #ff6578;
+  font-size: 27px;
+  font-weight: 900;
+}
+
+.rct-major > small {
+  color: #aabbd0;
+  font-size: 9px;
+}
+
+.rct-major > p {
+  color: #d0dbea;
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.rct-major-status {
+  padding-top: 9px;
+  color: #ffbdc5;
+  border-top: 1px solid #58303d;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+/* Legend and summary */
+
+.rct-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px 20px;
+  padding: 16px 5px 3px;
+  color: #a9bfd5;
+  font-size: 10px;
+}
+
+.rct-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.rct-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.rct-dot-major { background: #ff536d; }
+.rct-dot-database { background: #27baff; }
+.rct-dot-network { background: #22dfb5; }
+.rct-dot-service { background: #ffb13b; }
+.rct-dot-queue { background: #bd7bff; }
+
+.rct-summary {
+  margin-top: 17px;
+  padding: 16px;
+  background: #091d30;
+  border: 1px solid #174568;
+  border-radius: 10px;
+}
+
+.rct-summary h3 {
+  margin: 0 0 8px;
+  color: #f0f7ff;
+  font-size: 14px;
+}
+
+.rct-summary p,
+.rct-disclaimer {
+  color: #b9cde2;
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.rct-summary p {
+  margin: 0;
+}
+
+.rct-disclaimer {
+  margin: 12px 2px 0;
+  color: #819bb5;
+  font-size: 10px;
+}
+
+@media (max-width: 760px) {
+  .rct-panel {
+    padding: 12px;
+  }
+
+  .rct-header {
+    flex-direction: column;
+  }
+
+  .rct-tree {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    padding: 10px;
+  }
+
+  .rct-root-svg {
+    display: none;
+  }
+
+  .rct-slot {
+    padding: 0;
+  }
+
+  .rct-issue-card {
+    min-height: 0;
+  }
+
+  .rct-issue-title h3 {
+    font-size: 13px;
+  }
+
+  .rct-major {
+    position: relative;
+    top: auto;
+    left: auto;
+    order: -1;
+    width: 100%;
+    min-width: 0;
+    margin-bottom: 5px;
+    transform: none;
+  }
+
+  .rct-issue-description,
+  .rct-evidence-list li {
+    font-size: 11px;
+  }
+
+  .rct-legend {
+    justify-content: flex-start;
+  }
+}

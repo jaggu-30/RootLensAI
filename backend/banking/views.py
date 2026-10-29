@@ -1,5 +1,6 @@
 
 import json
+import re
 import random
 import threading
 import uuid
@@ -268,15 +269,56 @@ def build_root_cause_analysis(incident):
 
     candidates = []
 
-    def add_candidate(name, score, supporting, missing, solution, verify):
+    def matching_record_count(records, patterns):
+        """Count distinct recorded items that match any candidate-specific signal."""
+        count = 0
+        for record in records:
+            if isinstance(record, dict):
+                text = " ".join(
+                    str(record.get(field, ""))
+                    for field in (
+                        "kind", "message", "service", "source", "details",
+                        "signals", "fault_type", "event_type",
+                    )
+                ).lower()
+            else:
+                text = str(record).lower()
+            if text and any(pattern in text for pattern in patterns):
+                count += 1
+        return count
+
+    def add_candidate(
+        name, score, supporting, missing, solution, verify,
+        supporting_count=0, missing_count=None,
+    ):
+        # These numeric fields are for graphs. Narrative explanations above
+        # are intentionally not counted as evidence records.
+        if missing_count is None:
+            missing_count = max(
+                0,
+                sum(
+                    1 for item in missing
+                    if "independent corroboration" not in str(item).lower()
+                    and "independent service telemetry" not in str(item).lower()
+                ),
+            )
         candidates.append({
             "cause": name,
             "score": max(0, min(100, int(score))),
             "supporting_evidence": supporting,
             "missing_evidence": missing,
+            "supporting_evidence_count": max(0, int(supporting_count)),
+            "missing_evidence_count": max(0, int(missing_count)),
             "solution": solution,
             "verification": verify,
         })
+
+    def evidence_items_for_primary(incident_obj, transfer):
+        """Use the same actual incident + persisted transfer records for primary matching."""
+        items = list(incident_obj.evidence or [])
+        if transfer:
+            items.extend(build_transfer_evidence(transfer))
+        return items
 
     fault_type = incident.fault_type
 
@@ -325,30 +367,77 @@ def build_root_cause_analysis(incident):
 
     target = cause_catalog.get(fault_type)
     if target:
+        # The selected simulator fault type identifies the scenario being
+        # modeled, but it is not independent proof of the underlying cause.
         supporting = [
-            f"Recorded incident scenario type: {fault_type}.",
+            f"The simulator selected the '{fault_type}' scenario for this incident.",
         ]
-        score = 45
+        score = 60
 
-        # The predefined scenario is evidence of what the simulator selected,
-        # not independent proof of an underlying production root cause.
-        if transfer_obj and transfer_obj.sender_debited_at:
-            supporting.append("Sender-debit timestamp is recorded.")
-            score += 10
+        # Score the primary hypothesis higher only when the stored evidence
+        # contains a signal specific to that fault. Ordinary debit/credit
+        # timestamps are useful timeline context, but do not prove a queue,
+        # network, database, cache, or worker failure.
+        primary_signal_patterns = {
+            "delayed_credit": (
+                "receiver_credit_delayed", "credit delayed", "credit pending",
+                "receiver credit failed", "credit processing delay",
+            ),
+            "stale_balance": (
+                "stale_cache_value", "balance_refresh_required", "stale balance",
+                "outdated balance", "cache invalidation failed",
+            ),
+            "network_timeout": (
+                "simulated_request_timeout", "timed out", "timeout exceeded",
+                "deadline exceeded", "connection timeout",
+            ),
+            "database_failure": (
+                "simulated_database_connection_failure", "database unavailable",
+                "database error", "transaction rollback", "connection refused",
+            ),
+            "duplicate_request": (
+                "simulated_duplicate_request", "duplicate request",
+                "duplicate transaction", "idempotency conflict",
+            ),
+            "service_crash": (
+                "simulated_worker_interruption", "worker crashed", "service crashed",
+                "process terminated", "uncaught exception",
+            ),
+            "queue_backlog": (
+                "simulated_queue_backlog", "queue backlog", "consumer lag",
+                "queue depth exceeded", "messages pending",
+            ),
+            "bad_config": (
+                "simulated_invalid_configuration", "invalid configuration",
+                "configuration error", "missing environment variable",
+            ),
+        }
+        stored_evidence_text = " ".join(
+            str(item.get(field, ""))
+            for item in (incident.evidence or [])
+            if isinstance(item, dict)
+            for field in ("kind", "message", "service", "source", "details", "signals", "fault_type")
+        ).lower()
+        primary_matches = [
+            pattern for pattern in primary_signal_patterns.get(fault_type, ())
+            if pattern in stored_evidence_text
+        ]
+        if primary_matches:
+            supporting.append(
+                "Candidate-specific signal found in stored incident evidence: "
+                + ", ".join(primary_matches) + "."
+            )
+            score = 80
+        else:
+            supporting.append(
+                "No independent fault-specific telemetry is stored for this scenario; "
+                "the scenario label is not proof of a production root cause."
+            )
 
-        if transfer_obj and transfer_obj.receiver_credited_at:
-            supporting.append("Receiver-credit timestamp is recorded.")
-            score += 10
-
-        if (
-            transfer_obj
-            and transfer_obj.sender_debited_at
-            and transfer_obj.receiver_credited_at
-            and transfer_obj.receiver_credited_at > transfer_obj.sender_debited_at
-        ):
-            supporting.append("Receiver credit occurred after sender debit.")
-            score += 15
-
+        primary_matching_records = matching_record_count(
+            evidence_items_for_primary(incident, transfer_obj),
+            primary_signal_patterns.get(fault_type, ()),
+        )
         add_candidate(
             target[0],
             score,
@@ -359,44 +448,215 @@ def build_root_cause_analysis(incident):
             ],
             target[1],
             target[2],
+            supporting_count=primary_matching_records,
+            missing_count=max(1, len([
+                part for part in re.split(r",| and ", target[2].rstrip("."))
+                if part.strip()
+            ])),
         )
 
-    # Alternative hypotheses remain lower-ranked unless independent evidence
-    # is actually present. Do not invent service logs to support them.
+    # Alternative hypotheses are assessed against candidate-specific signals.
+    # A missing signal is not proof that a fault did not occur; it means the
+    # current incident records do not support that hypothesis independently.
     alternatives = [
-        ("Network timeout or retry handling", "network_timeout"),
-        ("Database connectivity or transaction failure", "database_failure"),
-        ("Queue backlog or consumer lag", "queue_backlog"),
-        ("Worker interruption", "service_crash"),
-        ("Stale balance or cache refresh", "stale_balance"),
-        ("Duplicate request or idempotency handling", "duplicate_request"),
-        ("Service configuration regression", "bad_config"),
-        ("Receiver-credit processing delay", "delayed_credit"),
+        (
+            "Network timeout or retry handling",
+            "network_timeout",
+            (
+                "simulated_request_timeout", "timed out", "timeout exceeded",
+                "deadline exceeded", "connection timeout", "retry exhausted",
+            ),
+            "request duration, timeout logs, retry history, and request IDs",
+        ),
+        (
+            "Database connectivity or transaction failure",
+            "database_failure",
+            (
+                "simulated_database_connection_failure", "database unavailable",
+                "database error", "transaction rollback", "connection refused",
+                "could not connect to database",
+            ),
+            "database connection logs, query errors, and transaction outcomes",
+        ),
+        (
+            "Queue backlog or consumer lag",
+            "queue_backlog",
+            (
+                "simulated_queue_backlog", "queue backlog", "consumer lag",
+                "queue depth exceeded", "messages pending", "oldest message age",
+            ),
+            "queue depth, oldest-message age, and consumer processing metrics",
+        ),
+        (
+            "Worker interruption",
+            "service_crash",
+            (
+                "simulated_worker_interruption", "worker crashed",
+                "service crashed", "process terminated", "uncaught exception",
+                "worker restart",
+            ),
+            "worker health, process status, restart history, and task acknowledgements",
+        ),
+        (
+            "Stale balance or cache refresh",
+            "stale_balance",
+            (
+                "stale_cache_value", "balance_refresh_required", "stale balance",
+                "outdated balance", "cache invalidation failed", "cache age",
+            ),
+            "cache value age, balance version, and refresh timestamps",
+        ),
+        (
+            "Duplicate request or idempotency handling",
+            "duplicate_request",
+            (
+                "simulated_duplicate_request", "duplicate request",
+                "duplicate transaction", "idempotency conflict", "already processed",
+                "same idempotency key",
+            ),
+            "request IDs, idempotency keys, and ledger-entry counts",
+        ),
+        (
+            "Service configuration regression",
+            "bad_config",
+            (
+                "simulated_invalid_configuration", "invalid configuration",
+                "configuration error", "missing environment variable",
+                "invalid service url", "configuration changed",
+            ),
+            "configuration validation, version history, and deployment records",
+        ),
+        (
+            "Receiver-credit processing delay",
+            "delayed_credit",
+            (
+                "receiver_credit_delayed", "credit delayed", "credit pending",
+                "receiver credit failed", "credit processing delay",
+            ),
+            "receiver-credit worker logs, processing duration, and retry records",
+        ),
     ]
 
+    # Preserve both incident-level evidence (including explicit simulation
+    # signals) and persisted transfer events. Do not claim simulation signals
+    # are independent production telemetry.
+    evidence_items = list(incident.evidence or [])
+    if transfer_obj:
+        evidence_items.extend(build_transfer_evidence(transfer_obj))
+
+    evidence_text = []
+    for item in evidence_items:
+        if isinstance(item, dict):
+            evidence_text.append(
+                " ".join(
+                    str(item.get(field, ""))
+                    for field in (
+                        "kind",
+                        "message",
+                        "service",
+                        "source",
+                        "details",
+                        "signals",
+                        "fault_type",
+                        "event_type",
+                    )
+                ).lower()
+            )
+
+    combined_evidence = "\n".join(evidence_text)
     existing_names = {item["cause"] for item in candidates}
-    for name, key in alternatives:
+
+    for name, key, patterns, required_evidence in alternatives:
         catalog_item = cause_catalog[key]
-        if name in existing_names or catalog_item[0] in existing_names:
+        candidate_name = catalog_item[0]
+
+        # Never add the selected primary fault again as a low-scoring
+        # alternative. The display label in the alternatives list can differ
+        # from the canonical catalog label, so compare the fault key too.
+        if key == fault_type:
             continue
+        if name in existing_names or candidate_name in existing_names:
+            continue
+
+        matched_signals = [
+            pattern for pattern in patterns if pattern in combined_evidence
+        ]
+
+        if matched_signals:
+            supporting = [
+                "Matching recorded text/signal: "
+                + ", ".join(matched_signals)
+                + ".",
+                "Check the source and origin of this signal; simulated evidence "
+                "does not independently establish a production fault.",
+            ]
+            # A match modestly increases a heuristic ranking score; it is not
+            # a calibrated probability.
+            score = 35
+        else:
+            supporting = [
+                f"No {key.replace('_', ' ')}-specific signal was found "
+                "in the available incident records.",
+                "Recorded transfer events provide context but do not by "
+                "themselves confirm this failure mode.",
+            ]
+            score = 15
+
+        matched_record_count = matching_record_count(evidence_items, patterns)
         add_candidate(
-            catalog_item[0],
-            15,
-            ["This is a possible failure mode, not a confirmed cause."],
-            ["No independent evidence currently confirms this candidate."],
+            candidate_name,
+            score,
+            supporting,
+            [
+                f"Required to investigate this candidate: {required_evidence}.",
+                "Independent corroboration is needed before confirmation.",
+            ],
             catalog_item[1],
             catalog_item[2],
+            supporting_count=matched_record_count,
+            missing_count=max(1, len([
+                part for part in re.split(r",| and ", required_evidence.rstrip("."))
+                if part.strip()
+            ])),
         )
 
+    # Preserve raw heuristic scores separately from the visual ranking-share
+    # allocation. The leading candidate receives 60 share points; the remaining
+    # 40 are distributed across alternatives in proportion to their raw scores.
+    # These shares are a display allocation, NOT calibrated probabilities.
     candidates.sort(key=lambda item: item["score"], reverse=True)
+    for item in candidates:
+        item["evidence_match_score"] = item["score"]
+
+    if candidates:
+        candidates[0]["ranking_share"] = 60.0
+        alternatives_only = candidates[1:]
+        if alternatives_only:
+            raw_total = sum(max(0, int(item.get("evidence_match_score", 0))) for item in alternatives_only)
+            remaining = 40.0
+            if raw_total > 0:
+                shares = [
+                    remaining * max(0, int(item.get("evidence_match_score", 0))) / raw_total
+                    for item in alternatives_only
+                ]
+            else:
+                shares = [remaining / len(alternatives_only)] * len(alternatives_only)
+            # Round to one decimal place and allocate rounding remainder to last row.
+            rounded = [round(value, 1) for value in shares]
+            if rounded:
+                rounded[-1] = round(remaining - sum(rounded[:-1]), 1)
+            for item, share in zip(alternatives_only, rounded):
+                item["ranking_share"] = share
     primary = candidates[0] if candidates else None
 
     return {
         "incident_key": incident.incident_key,
-        "score_type": "deterministic_evidence_match",
+        "score_type": "relative_ranking_share",
         "score_warning": (
-            "Scores are heuristic evidence-match scores, not calibrated "
-            "probabilities or proof of a production root cause."
+            "Ranking shares are a display allocation: the leading candidate receives 60 "
+            "share points and the remaining 40 are distributed across alternatives based "
+            "on their raw heuristic scores. They are not calibrated probabilities and "
+            "do not prove a production root cause. Raw evidence_match_score is also returned."
         ),
         "primary_cause": primary,
         "tree": {
@@ -671,22 +931,169 @@ class TransferView(APIView):
         }, status=201)
 
 
+
 class SimulateFaultView(APIView):
+    """
+    Create a deterministic, explicitly simulated incident.
+
+    Evidence describes the modeled scenario; it does not claim that a
+    production failure was independently observed.
+    """
+
+    SCENARIO_EVIDENCE = {
+        "delayed_credit": {
+            "kind": "credit_delay_simulation",
+            "service": "payment-simulator",
+            "message": (
+                "Simulated delayed receiver credit after sender debit."
+            ),
+            "signals": ["sender_debited", "receiver_credit_delayed"],
+            "verification_needed": [
+                "receiver_credit_timestamp",
+                "configured_delay_threshold",
+            ],
+        },
+        "stale_balance": {
+            "kind": "cache_staleness_simulation",
+            "service": "balance-cache-simulator",
+            "message": (
+                "Simulated stale balance response from a cached value."
+            ),
+            "signals": ["stale_cache_value", "balance_refresh_required"],
+            "verification_needed": [
+                "cache_value_age",
+                "balance_version",
+                "refresh_timestamp",
+            ],
+        },
+        "network_timeout": {
+            "kind": "network_timeout_simulation",
+            "service": "network-simulator",
+            "message": (
+                "Simulated request/response timeout; no real network "
+                "failure was performed."
+            ),
+            "signals": ["simulated_request_timeout"],
+            "verification_needed": [
+                "request_deadline",
+                "timeout_timestamp",
+                "retry_history",
+            ],
+        },
+        "database_failure": {
+            "kind": "database_failure_simulation",
+            "service": "database-simulator",
+            "message": (
+                "Modeled a database connection failure; no real database "
+                "connection was interrupted."
+            ),
+            "signals": ["simulated_database_connection_failure"],
+            "verification_needed": [
+                "database_connection_log",
+                "query_error",
+                "connection_recovery_timestamp",
+            ],
+        },
+        "duplicate_request": {
+            "kind": "duplicate_request_simulation",
+            "service": "request-simulator",
+            "message": (
+                "Modeled a repeated request with the same idempotency key."
+            ),
+            "signals": ["simulated_duplicate_request"],
+            "verification_needed": [
+                "request_ids",
+                "idempotency_key",
+                "transaction_count",
+            ],
+        },
+        "service_crash": {
+            "kind": "service_interruption_simulation",
+            "service": "payment-worker-simulator",
+            "message": (
+                "Modeled a payment-worker interruption; no real worker "
+                "was terminated."
+            ),
+            "signals": ["simulated_worker_interruption"],
+            "verification_needed": [
+                "worker_process_status",
+                "exception_trace",
+                "restart_timestamp",
+            ],
+        },
+        "queue_backlog": {
+            "kind": "queue_backlog_simulation",
+            "service": "confirmation-queue-simulator",
+            "message": (
+                "Modeled a confirmation queue backlog."
+            ),
+            "signals": ["simulated_queue_backlog"],
+            "verification_needed": [
+                "queue_depth",
+                "oldest_message_age",
+                "consumer_lag",
+            ],
+        },
+        "bad_config": {
+            "kind": "configuration_error_simulation",
+            "service": "configuration-simulator",
+            "message": (
+                "Modeled an invalid service configuration; no live "
+                "configuration was changed."
+            ),
+            "signals": ["simulated_invalid_configuration"],
+            "verification_needed": [
+                "configuration_validation_result",
+                "configuration_version",
+                "deployment_history",
+            ],
+        },
+    }
+
     def post(self, request):
         if not is_admin(request.user):
             return Response(
-                {"detail": "Only admins can run standalone fault scenarios."},
+                {
+                    "detail": (
+                        "Only admins can run standalone fault scenarios."
+                    )
+                },
                 status=403,
             )
 
-        fault_type = str(request.data.get("fault_type", "network_timeout"))
-        if fault_type not in FAULTS:
-            return Response({"detail": "Unknown predefined fault."}, status=400)
+        fault_type = str(
+            request.data.get("fault_type", "network_timeout")
+        )
 
-        target_name = str(request.data.get("username", "demo_user"))
-        target = User.objects.filter(username=target_name).first()
+        if fault_type not in FAULTS:
+            return Response(
+                {"detail": "Unknown predefined fault."},
+                status=400,
+            )
+
+        target_name = str(
+            request.data.get("username", "demo_user")
+        )
+        target = User.objects.filter(
+            username=target_name
+        ).first()
+
         info = FAULTS[fault_type]
+        scenario = self.SCENARIO_EVIDENCE[fault_type]
         now = timezone.now()
+
+        evidence = {
+            "time": now.isoformat(),
+            "kind": scenario["kind"],
+            "service": scenario["service"],
+            "message": scenario["message"],
+            "level": "WARN",
+            "source": "rootlens_simulation",
+            "evidence_origin": "simulated",
+            "fault_type": fault_type,
+            "signals": scenario["signals"],
+            "verification_needed": scenario["verification_needed"],
+        }
 
         incident = Incident.objects.create(
             incident_key=f"INC-{uuid.uuid4().hex[:8].upper()}",
@@ -695,23 +1102,22 @@ class SimulateFaultView(APIView):
             description=info["description"],
             severity=info["severity"],
             affected_user=target,
-            evidence=[{
-                "time": now.isoformat(),
-                "kind": "simulator_event",
-                "service": "rootlens-simulator",
-                "message": f"Predefined scenario selected: {fault_type}.",
-                "level": "INFO",
-                "source": "recorded_simulator_event",
-            }],
+            evidence=[evidence],
             hypothesis=info["hypothesis"],
             status="RECOVERED",
             recovered_at=now,
         )
 
-        return Response({
-            "message": "Predefined fault simulated. Scenario evidence saved.",
-            "incident": IncidentSerializer(incident).data,
-        }, status=201)
+        return Response(
+            {
+                "message": (
+                    "Simulated scenario recorded. Evidence is labeled "
+                    "as simulated and does not establish a production fault."
+                ),
+                "incident": IncidentSerializer(incident).data,
+            },
+            status=201,
+        )
 
 
 class IncidentListView(APIView):
@@ -895,4 +1301,61 @@ class RecoverIncidentView(APIView):
         return Response({
             "message": "Marked verified for this simulated scenario.",
             "incident": IncidentSerializer(incident).data,
+        })
+
+
+class IncidentSourceAnalysisView(APIView):
+    """Read-only source analysis for an authorized incident."""
+
+    def get(self, request, pk):
+        incident = (
+            Incident.objects
+            .select_related("affected_user", "transfer")
+            .filter(pk=pk)
+            .first()
+        )
+
+        if incident is None:
+            return Response(
+                {"detail": "Incident not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Only administrators or the affected user may inspect this incident.
+        if (
+            not is_admin(request.user)
+            and incident.affected_user_id != request.user.id
+        ):
+            return Response(
+                {"detail": "You are not permitted to analyze this incident."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            from .source_analysis import analyze_incident_source
+
+            result = analyze_incident_source(incident)
+
+        except Exception:
+            # Keep internal paths and exception details out of API responses.
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "Source analysis failed for incident %s",
+                incident.pk,
+            )
+
+            return Response(
+                {
+                    "detail": (
+                        "Source analysis failed. Check the Django "
+                        "server terminal for the underlying error."
+                    )
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response({
+            "incident_id": incident.pk,
+            **result,
         })
